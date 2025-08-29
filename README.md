@@ -2,4 +2,4 @@
 
 This repository will contain the code for our IROS 2025 paper.
 
-Code will be released by September 1st, 2025.
+Code will be released by September 15, 2025
