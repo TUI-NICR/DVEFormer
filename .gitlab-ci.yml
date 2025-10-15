@@ -1,0 +1,98 @@
+stages:
+  - stylecheck
+  - test
+  - deploy
+
+.conda_env: &conda_env
+    before_script:
+        # update conda
+        - conda config --set always_yes yes
+        - conda update -q conda
+
+        # create and activate environment
+        - conda create -q -n testenv_${CI_JOB_ID}_py${PYTHON_VERSION_TO_USE//./} python=${PYTHON_VERSION_TO_USE} pip
+        - source activate testenv_${CI_JOB_ID}_py${PYTHON_VERSION_TO_USE//./}
+
+    after_script:
+        # remove environment
+        - conda env remove --name testenv_${CI_JOB_ID}_py${PYTHON_VERSION_TO_USE//./}
+
+.test_template: &test_template
+    <<: *conda_env
+    stage: test
+    rules:
+        - if: $CI_MERGE_REQUEST_TITLE =~ /^(Draft:|WIP:|\[Draft\]|\[WIP\])/
+          when: manual
+        - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TITLE !~ /^(Draft:|WIP:|\[Draft\]|\[WIP\])/
+        - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+        - if: $CI_PIPELINE_SOURCE == "schedule"
+    # parallel: 1
+    script:
+        # install packages (use conda to avoid time-consuming installations)
+        - conda install -q pytest pytest-cov
+        - python -m pip install -q pytest-html
+        - python -m pip install pytest-xdist    # multiple workers for pytest (-n 2 below)
+
+        # install dependencies
+        - |
+          if [ "${PYTHON_VERSION_TO_USE}" == "3.8" ]; then
+            # torch 2.4.1 was the last version for Python 3.8
+            python -m pip install torch==2.4.1 torchvision==0.19.1 --index-url https://download.pytorch.org/whl/cpu
+            python -m pip install torchmetrics==1.5.2
+          else
+            python -m pip install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cpu
+            python -m pip install torchmetrics==1.8.2
+          fi
+
+        - python -m pip install 'opencv-python>=4.2.0.34'
+        - python -m pip install 'wandb>=0.14.2'
+        - python -m pip install 'onnx>=1.13.1'
+        - python -m pip install 'nicr-cluster-utils>=1.0.0'
+        - python -m pip install git+https://github.com/cocodataset/panopticapi.git
+        # - python -m pip install pycocotools==2.0.2
+        # install packages (and all missing dependencies)
+        - python -m pip install --editable lib/nicr-scene-analysis-datasets[test]
+        - python -m pip install --editable lib/nicr-multitask-scene-analysis[test]
+
+        # check conda installation
+        - conda info
+        - conda list
+        - python -m pip list
+
+        # run test
+        - py.test ./dveformer/tests -vv -rx -s --maxfail=4 --ff --html=report_py${PYTHON_VERSION_TO_USE//./}.html --self-contained-html
+
+style_check:
+    <<: *conda_env
+    stage: stylecheck
+    rules:
+        - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+        - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+        - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    variables:
+        PYTHON_VERSION_TO_USE: "3.8"
+    script:
+        # install packages
+        - pip install ruff
+
+        # check style using ruff
+        - ruff check .
+
+tests_py38:    # ubuntu20
+    <<: *test_template
+    variables:
+        PYTHON_VERSION_TO_USE: "3.8"
+        GIT_SUBMODULE_STRATEGY: recursive
+
+tests_py310:    # ubuntu22
+    <<: *test_template
+    variables:
+        PYTHON_VERSION_TO_USE: "3.10"
+        GIT_SUBMODULE_STRATEGY: recursive
+
+tests_py312:    # ubuntu24
+    <<: *test_template
+    variables:
+        PYTHON_VERSION_TO_USE: "3.12"
+        GIT_SUBMODULE_STRATEGY: recursive
+
